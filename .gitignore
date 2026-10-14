@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+.DS_Store
+# Üretilen raporlar kişisel çalışma verisi içerir; repo'ya girmemeli
+*.xlsx
+*.csv
+.jira_worklog_app.json
