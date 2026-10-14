@@ -208,7 +208,14 @@ class JiraClient:
 
     @staticmethod
     def _build_openers() -> list:
-        contexts = [ssl.create_default_context()]  # önce sistemin sertifika deposu
+        contexts = []
+        try:
+            import truststore  # işletim sisteminin sertifika deposu (şirket kök sertifikaları dahil); Python 3.10+
+
+            contexts.append(truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
+        except Exception:
+            pass
+        contexts.append(ssl.create_default_context())  # Python'ın kendi sertifika ayarları
         try:
             import certifi  # paketlenmiş uygulamada sistem deposu olmayabilir
 

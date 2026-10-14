@@ -1,3 +1,4 @@
 certifi
 keyring>=24
 openpyxl>=3.1
+truststore>=0.9; python_version >= "3.10"

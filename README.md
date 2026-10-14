@@ -17,12 +17,19 @@ Uygulama açılınca bilgisayarda küçük bir yerel sunucu başlar ve tarayıc�
 Terminal'i aç (Cmd+Boşluk, «Terminal») ve şu tek komutu yapıştır:
 
 ```bash
-git clone https://github.com/aliyetim/jira-worklog.git ~/jira-worklog && bash ~/jira-worklog/install.sh
+curl -fsSL https://raw.githubusercontent.com/aliyetim/jira-worklog/main/install.sh | bash
 ```
 
-Mac'te Git ya da Python yoksa Apple «komut satırı araçları» penceresi çıkarır: **Install**'a bas, bitince aynı komutu yeniden çalıştır.
+Git ya da Apple'ın komut satırı araçları (Xcode CLT, ~1 GB) **gerekmez**. Komut yalnızca macOS'ta hazır gelen `curl` ile
+uygulama dosyalarını (~100 KB) ve taşınabilir bir Python 3.12'yi (~25 MB, [python-build-standalone](https://github.com/astral-sh/python-build-standalone))
+`~/jira-worklog` klasörüne indirir; Python'ın sürümü `install.sh` içinde sabittir ve indirilen dosya SHA-256 ile doğrulanır.
+Sisteme hiçbir şey kurulmaz, yönetici şifresi istenmez; kurulum yaklaşık bir dakika sürer.
 Kurulum sonunda **Jira Worklog** uygulaması oluşur (Launchpad ya da Spotlight'tan aç). Uygulama bu Mac'te üretildiği için
-«Apple doğrulayamadı» uyarısı çıkmaz.
+«Apple doğrulayamadı» uyarısı çıkmaz. Başlatıcısı macOS'un `osacompile` aracıyla üretilen bir AppleScript programıdır (Apple'ın
+evrensel arm64/x86_64 «applet»i); Apple Silicon'da **Rosetta istemez**.
+
+Eski kurulumlarda başlatıcı bir bash betiğiydi ve Apple Silicon'da Rosetta istiyordu. Bu kurulumlar ilk güncellemeden sonraki
+açılışta kendiliğinden yeni başlatıcıya geçer; hemen düzeltmek için: `bash ~/jira-worklog/install.sh --app-only`.
 
 ### Windows
 
@@ -37,7 +44,13 @@ klasördeki `start.bat` dosyasına çift tıkla (ilk açılışta kurulumu kendi
 ### Güncelleme
 
 Uygulama her açılışta repo'dan güncellemeyi sessizce çeker (ağ yoksa mevcut sürümle devam eder). Kapatmak için
-`JIRA_WORKLOG_NO_UPDATE=1` ortam değişkenini ver. Elle güncellemek için: `cd ~/jira-worklog && git pull`.
+`JIRA_WORKLOG_NO_UPDATE=1` ortam değişkenini ver.
+
+- `curl` ile kurulanlar: `main` dalının arşivi koşullu istekle (`If-None-Match`) sorulur; değişiklik yoksa sunucu 304 döner ve
+  hiçbir şey indirilmez. Sürüm işareti `.version` dosyasındadır.
+- `git clone` ile kurulmuş eski kurulumlar `git pull` ile güncellenmeye devam eder.
+- Python sürümünü yükseltmek için `install.sh` içindeki `PY_RELEASE`/`PY_VERSION`/`PY_SHA256_*` değiştirilir; kullanıcıların
+  kurulum komutunu bir kez yeniden çalıştırması gerekir (uygulama dosyaları ve ayarlar korunur).
 
 ## Kullanım
 
@@ -53,7 +66,7 @@ Ayrıntılı anlatım: [`PM_KULLANIM_REHBERI.md`](PM_KULLANIM_REHBERI.md).
 
 | Dosya | Görevi |
 |---|---|
-| `install.sh` | Mac/Linux kurulumu: sanal ortam, bağımlılıklar, `Jira Worklog.app` |
+| `install.sh` | Mac/Linux kurulumu: uygulama dosyaları, (Mac'te) taşınabilir Python, sanal ortam, bağımlılıklar, `Jira Worklog.app` |
 | `start.sh`, `start.command`, `start.bat` | Güncelle + başlat (uygulama bunları çağırır) |
 | `worklog_web.py` | Uygulamanın kendisi: yerel sunucu + API |
 | `web_page.py` | Tarayıcıda açılan sayfa (HTML/CSS/JS) |
