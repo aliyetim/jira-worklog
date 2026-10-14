@@ -4,7 +4,7 @@
 cd "$(dirname "$0")" || exit 1
 
 if [ ! -x .venv/bin/python ]; then
-  echo "Önce kurulum gerekli:  bash install.sh"
+  echo "Setup is required first:  bash install.sh"
   exit 1
 fi
 

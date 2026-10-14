@@ -94,10 +94,10 @@ class AppState:
         self.worker: threading.Thread | None = None
         self.tmpdir = Path(tempfile.mkdtemp(prefix="jira_worklog_"))
         self.file: Path | None = None
+        self.rows: list[dict] | None = None        # önizleme tablosu için (yalnızca bellekte)
         self.started = time.time()
         self.last_ping: float | None = None
         self.bye_at: float | None = None
-        self.quit_requested = False
         self.job = _blank_job()
 
     def update(self, **kw):
@@ -119,7 +119,7 @@ class AppState:
 def start_job(state: AppState, payload: dict) -> None:
     """Girdileri doğrular ve işi başlatır. Geçersizse core.JiraError fırlatır."""
     if state.busy():
-        raise core.JiraError("Bir rapor zaten hazırlanıyor.")
+        raise core.JiraError("A report is already being prepared.")
     url = core.normalize_url(payload.get("url", ""))
     projects = core.parse_projects(payload.get("project", ""))
     preset = payload.get("preset")
@@ -132,7 +132,7 @@ def start_job(state: AppState, payload: dict) -> None:
     core.check_range(start, end)
     raw_token = payload.get("token", "")
     if not str(raw_token).strip():
-        raise core.JiraError("Token boş olamaz. «Nasıl üretilir?» bağlantısına tıklayabilirsin.")
+        raise core.JiraError("Token cannot be empty. Click «How do I create one?» for help.")
     token = core.clean_token(raw_token)
     fmt = "csv" if payload.get("format") == "csv" else "xlsx"
 
@@ -142,6 +142,7 @@ def start_job(state: AppState, payload: dict) -> None:
         except OSError:
             pass
         state.file = None
+    state.rows = None
     state.cancel.clear()
     with state.lock:
         state.job = _blank_job() | {"state": "running", "start": start.isoformat(), "end": end.isoformat(),
@@ -150,6 +151,13 @@ def start_job(state: AppState, payload: dict) -> None:
                  "start": start.isoformat(), "end": end.isoformat(), "format": fmt})
     state.worker = threading.Thread(target=_run_job, args=(state, url, token, projects, start, end, fmt), daemon=True)
     state.worker.start()
+
+
+def _row_json(r: dict) -> dict:
+    return {"user": r["user"], "date": r["date"].isoformat(), "time": f"{r['time']:%H:%M}", "key": r["key"],
+            "summary": r["summary"], "project": r["project"], "type": r["type"], "hours": r["hours"],
+            "comment": r["comment"], "created": f"{r['created']:%Y-%m-%d %H:%M}" if r.get("created") else "",
+            "url": r["url"]}
 
 
 def _run_job(state: AppState, url, token, projects, start, end, fmt) -> None:
@@ -171,6 +179,7 @@ def _run_job(state: AppState, url, token, projects, start, end, fmt) -> None:
             k = r["date"].isoformat()
             daily[k] = round(daily.get(k, 0) + r["hours"], 2)
         state.file = path
+        state.rows = [_row_json(r) for r in rows]
         state.update(state="done", filename=path.name, count=len(rows), people=len({r["user"] for r in rows}),
                      hours=round(sum(r["hours"] for r in rows), 2), daily=daily)
     except core.Cancelled:
@@ -178,11 +187,11 @@ def _run_job(state: AppState, url, token, projects, start, end, fmt) -> None:
     except core.JiraError as e:
         state.update(state="error", message=str(e))
     except ImportError:
-        state.update(state="error", message="Excel çıktısı için gerekli bileşen bulunamadı. CSV biçimini seçip tekrar dene.")
+        state.update(state="error", message="The component needed for Excel output is missing. Choose CSV and try again.")
     except OSError as e:
-        state.update(state="error", message=f"Dosya hazırlanamadı: {e.strerror or e}")
+        state.update(state="error", message=f"Could not prepare the file: {e.strerror or e}")
     except Exception as e:  # beklenmeyen durum: kullanıcıya düz metin göster
-        state.update(state="error", message=f"Beklenmeyen hata: {type(e).__name__}: {e}")
+        state.update(state="error", message=f"Unexpected error: {type(e).__name__}: {e}")
 
 
 # --------------------------------------------------------------------------
@@ -259,12 +268,19 @@ def make_handler(state: AppState):
                     return
                 self._ping()
                 return self._json(200, state.snapshot())
+            if path == "/api/rows":
+                if not self._guard():
+                    return
+                rows = state.rows
+                if state.snapshot()["state"] != "done" or rows is None:
+                    return self._json(404, {"error": "No report is ready."})
+                return self._json(200, {"rows": rows})
             if path == "/download":
                 if not self._guard(via_query=True):
                     return
                 f = state.file
                 if state.snapshot()["state"] != "done" or not f or not f.exists():
-                    return self._json(404, {"error": "Hazır bir rapor yok."})
+                    return self._json(404, {"error": "No report is ready."})
                 ctype = ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if f.suffix == ".xlsx"
                          else "text/csv; charset=utf-8")
                 return self._send(200, f.read_bytes(), ctype,
@@ -283,7 +299,7 @@ def make_handler(state: AppState):
                 return
             length = int(self.headers.get("Content-Length") or 0)
             if length > MAX_BODY:
-                return self._json(413, {"error": "İstek çok büyük."})
+                return self._json(413, {"error": "Request too large."})
             raw = self.rfile.read(length) if length else b""
             if path == "/api/start":
                 try:
@@ -291,7 +307,7 @@ def make_handler(state: AppState):
                     if not isinstance(payload, dict):
                         raise ValueError
                 except ValueError:
-                    return self._json(400, {"error": "İstek okunamadı."})
+                    return self._json(400, {"error": "Could not read the request."})
                 try:
                     start_job(state, payload)
                 except core.JiraError as e:
@@ -300,11 +316,6 @@ def make_handler(state: AppState):
             if path == "/api/cancel":
                 state.cancel.set()
                 return self._json(200, {"ok": True})
-            if path == "/api/quit":
-                state.quit_requested = True
-                self._json(200, {"ok": True})
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
-                return
             self._json(404, {"error": "not found"})
 
     return Handler
@@ -317,7 +328,7 @@ class Server(ThreadingHTTPServer):
 
 def watchdog(state: AppState, server: ThreadingHTTPServer) -> None:
     """Sekme kapanınca (ya da hiç açılmazsa) uygulamanın arka planda takılı kalmasını önler."""
-    while not state.quit_requested:
+    while True:
         time.sleep(2)
         if state.busy():
             continue
@@ -343,9 +354,9 @@ def already_running(port: int) -> bool:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Jira Worklog Raporu (yerel web arayüzü)")
-    ap.add_argument("--port", type=int, default=None, help="Belirli bir port (0 = rastgele)")
-    ap.add_argument("--no-browser", action="store_true", help="Tarayıcıyı otomatik açma")
+    ap = argparse.ArgumentParser(description="Jira Worklog Report (local web interface)")
+    ap.add_argument("--port", type=int, default=None, help="Specific port (0 = random)")
+    ap.add_argument("--no-browser", action="store_true", help="Do not open the browser automatically")
     args, _ = ap.parse_known_args(argv)  # macOS'un eklediği -psn_... gibi argümanlara takılma
     no_browser = args.no_browser or bool(os.environ.get("JIRA_WORKLOG_NO_BROWSER"))
 
@@ -362,11 +373,11 @@ def main(argv=None) -> int:
                     webbrowser.open(f"http://127.0.0.1:{port}/")
                 return 0  # zaten açık; mevcut pencereyi öne getirdik
     if server is None:
-        print("Uygulama başlatılamadı: port kullanımda ya da açılamadı.", file=sys.stderr)
+        print("Could not start the app: the port is in use or could not be opened.", file=sys.stderr)
         return 1
 
     url = f"http://127.0.0.1:{server.server_address[1]}/"
-    print(f"Jira Worklog Raporu: {url}", flush=True)
+    print(f"Jira Worklog Report: {url}", flush=True)
     threading.Thread(target=watchdog, args=(state, server), daemon=True).start()
     if not no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()

@@ -2,10 +2,10 @@
 rem Windows: ilk calistirmada kurulum yapar, sonra uygulamayi acar. Cift tiklamak yeterli.
 cd /d "%~dp0"
 if not exist ".venv\Scripts\python.exe" (
-  echo Ilk kurulum yapiliyor, birkac dakika surebilir...
+  echo First-time setup in progress, this may take a few minutes...
   py -3 -m venv .venv 2>nul || python -m venv .venv
   if errorlevel 1 (
-    echo Python 3.9 veya ustu bulunamadi. https://www.python.org/downloads/ adresinden kurup tekrar deneyin.
+    echo Python 3.9 or newer was not found. Install it from https://www.python.org/downloads/ and try again.
     pause
     exit /b 1
   )

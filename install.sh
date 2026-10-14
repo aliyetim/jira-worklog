@@ -12,18 +12,18 @@ say() { printf '\n%s\n' "$1"; }
 if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
   if [ "$OS" = "Darwin" ] && ! xcode-select -p >/dev/null 2>&1; then
     xcode-select --install >/dev/null 2>&1 || true
-    say "Mac'inde Python ve Git için Apple'ın «komut satırı araçları» gerekiyor."
-    echo "Ekrandaki pencerede «Install» (Yükle) düğmesine bas, kurulum bitince bu komutu tekrar çalıştır:"
+    say "Your Mac needs Apple's «Command Line Tools» for Python and Git."
+    echo "Click «Install» in the window that appears; when it finishes, run this command again:"
     echo "  bash \"$HERE/install.sh\""
   else
-    say "Python 3.9 veya üstü bulunamadı. Python'u kurduktan sonra bu komutu tekrar çalıştır:"
+    say "Python 3.9 or newer was not found. Install Python, then run this command again:"
     echo "  bash \"$HERE/install.sh\""
   fi
   exit 1
 fi
 
 # --- 2) Sanal ortam ve bağımlılıklar
-say "Bağımlılıklar kuruluyor (1-2 dakika sürebilir)..."
+say "Installing dependencies (this may take 1-2 minutes)..."
 python3 -m venv .venv
 .venv/bin/python -m pip install -q --disable-pip-version-check -r requirements.txt
 cksum < requirements.txt > .venv/.req-sum
@@ -56,19 +56,19 @@ PLIST
 #!/bin/bash
 APP_DIR="$HERE"
 if [ ! -f "\$APP_DIR/start.sh" ]; then
-  osascript -e 'display dialog "Jira Worklog klasörü bulunamadı. Klasörü taşıdıysan Terminal penceresinde klasörün içinde «bash install.sh» komutunu yeniden çalıştır." buttons {"Tamam"} with icon caution' >/dev/null 2>&1
+  osascript -e 'display dialog "The Jira Worklog folder was not found. If you moved it, open Terminal in the folder and run «bash install.sh» again." buttons {"OK"} with icon caution' >/dev/null 2>&1
   exit 1
 fi
 exec /bin/bash "\$APP_DIR/start.sh"
 LAUNCH
   chmod +x "$APP/Contents/MacOS/launcher" start.sh start.command
   touch "$APP"
-  say "Kurulum tamamlandı."
-  echo "Uygulama: $APP"
-  echo "Açmak için Launchpad'de ya da Spotlight'ta (Cmd+Boşluk) «Jira Worklog» yaz."
-  echo "Dock'ta tutmak istersen açılan Finder penceresinde uygulamayı Dock'a sürükle."
+  say "Setup complete."
+  echo "App: $APP"
+  echo "To open it, type «Jira Worklog» in Launchpad or Spotlight (Cmd+Space)."
+  echo "To keep it in the Dock, drag the app from the Finder window that opens into the Dock."
   open -R "$APP" >/dev/null 2>&1 || true
 else
   chmod +x start.sh start.command 2>/dev/null || true
-  say "Kurulum tamamlandı. Başlatmak için:  bash \"$HERE/start.sh\""
+  say "Setup complete. To start:  bash \"$HERE/start.sh\""
 fi

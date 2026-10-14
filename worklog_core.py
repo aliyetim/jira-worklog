@@ -8,21 +8,25 @@ Jira Server / Data Center worklog çekirdeği (arayüzden bağımsız).
 from __future__ import annotations
 
 import csv
+import gzip
 import json
+import math
 import re
 import socket
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
 DEFAULT_URL = ""  # kasıtlı olarak boş: adres ilk kullanımda sorulur ve yerel ayar dosyasına kaydedilir
 
-COLUMNS = ["Kullanıcı", "Tarih", "Başlama Saati", "Task", "Özet", "Proje", "Tip", "Saat", "Yorum", "Girilme Zamanı"]
+COLUMNS = ["User", "Date", "Start Time", "Issue", "Summary", "Project", "Type", "Hours", "Comment", "Logged At"]
 
 # Türkiye 2016'dan beri yıl boyunca UTC+3 (yaz/kış saati uygulaması yok); ek bileşen gerekmez.
 TURKEY_TZ = timezone(timedelta(hours=3))
@@ -32,6 +36,12 @@ _PROJECT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _URL_CUT_MARKERS = ("/browse", "/secure", "/projects", "/issues", "/rest", "/plugins", "/login", "/dashboard")
 
 ProgressFn = Callable[[str, int, int], None]  # (aşama, tamamlanan, toplam)
+
+# Jira'ya giden istek sayısını azaltmak için worklog'lar arama yanıtına gömülü istenir (issue başına en fazla 20).
+# Sunucunun üst sınırı daha düşükse dönen kayıt sayısına göre sayfalanır.
+SEARCH_PAGE_SIZE = 500
+DETAIL_WORKERS = 4      # yalnızca 20'den fazla worklog'u olan task'lar için; istek sayısını değil süreyi etkiler
+LEGACY_PAGE_SIZE = 100  # önceki yöntem: 100'lük arama sayfaları + her task için ayrı worklog isteği
 
 
 class JiraError(Exception):
@@ -52,36 +62,36 @@ def parse_date(text: str) -> date:
             return datetime.strptime(text, fmt).date()
         except ValueError:
             continue
-    raise JiraError(f"Tarih anlaşılamadı: '{text}'. Örnek: 01.09.2026")
+    raise JiraError(f"Could not read the date '{text}'. Example: 01.09.2026")
 
 
 def parse_projects(text: str) -> list[str]:
     keys = [k.strip().upper() for k in re.split(r"[,\s;]+", text or "") if k.strip()]
     if not keys:
-        raise JiraError("Proje anahtarı boş olamaz. Örnek: PROJ (birden fazlası için virgülle ayır).")
+        raise JiraError("Project key cannot be empty. Example: PROJ (separate several with commas).")
     for k in keys:
         if not _PROJECT_RE.match(k):
             raise JiraError(
-                f"Proje anahtarı geçersiz: '{k}'. Sadece harf, rakam ve alt çizgi olmalı (örnek: PROJ)."
+                f"Invalid project key '{k}'. Use only letters, digits and underscores (example: PROJ)."
             )
     return keys
 
 
 def check_range(start: date, end: date) -> None:
     if end < start:
-        raise JiraError("Bitiş tarihi başlangıç tarihinden önce olamaz.")
+        raise JiraError("The end date cannot be before the start date.")
 
 
 def normalize_url(text: str) -> str:
     """'https://jira.sirket.com/browse/ABC-1?filter=-4' gibi yapıştırılan adresi ana adrese indirir."""
     text = (text or "").strip()
     if not text:
-        raise JiraError("Jira adresi boş olamaz.")
+        raise JiraError("Jira address cannot be empty.")
     if not re.match(r"^https?://", text, re.I):
         text = "https://" + text
     parsed = urllib.parse.urlparse(text)
     if not parsed.netloc:
-        raise JiraError(f"Jira adresi anlaşılamadı: '{text}'.")
+        raise JiraError(f"Could not read the Jira address '{text}'.")
     path = parsed.path
     for marker in _URL_CUT_MARKERS:
         idx = path.find(marker)
@@ -95,7 +105,7 @@ def clean_token(token: str) -> str:
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
     if not token:
-        raise JiraError("Token boş olamaz.")
+        raise JiraError("Token cannot be empty.")
     return token
 
 
@@ -114,7 +124,7 @@ def parse_jira_datetime(text: str) -> datetime:
     """'2026-09-03T10:15:00.000+0300' -> saat dilimi bilgili datetime. Ofset yoksa Türkiye saati varsayılır."""
     m = _JIRA_DT_RE.match((text or "").strip())
     if not m:
-        raise JiraError(f"Jira'dan beklenmeyen bir tarih/saat geldi: '{text}'.")
+        raise JiraError(f"Jira returned an unexpected date/time: '{text}'.")
     naive = datetime.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S")
     off = m.group(2)
     if off is None:
@@ -136,6 +146,39 @@ def to_turkey_time(text: str) -> datetime:
 # --------------------------------------------------------------------------
 # Jira istemcisi (yalnızca GET)
 # --------------------------------------------------------------------------
+class RequestStats:
+    """Jira'ya giden istek sayısı ve indirilen veri (sunucu yükünün göstergesi). Birden çok iş parçacığından yazılır."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._t0 = time.monotonic()
+        self.requests = 0
+        self.bytes = 0
+        self.baseline = 0  # önceki yöntemle aynı rapor için gereken istek sayısı
+        self.seconds = 0.0
+
+    def add(self, nbytes: int) -> None:
+        with self._lock:
+            self.requests += 1
+            self.bytes += nbytes
+
+    def finish(self, issues: int) -> None:
+        self.baseline = math.ceil(issues / LEGACY_PAGE_SIZE) + issues if issues else self.requests
+        self.seconds = time.monotonic() - self._t0
+
+    def as_dict(self) -> dict:
+        with self._lock:
+            return {"requests": self.requests, "bytes": self.bytes, "baseline": self.baseline,
+                    "seconds": round(self.seconds or time.monotonic() - self._t0, 1)}
+
+
+def _read_body(resp) -> bytes:
+    raw = resp.read()
+    if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
+        raw = gzip.decompress(raw)
+    return raw
+
+
 class _SafeRedirect(urllib.request.HTTPRedirectHandler):
     """Token'ın başka bir sunucuya (ya da şifresiz http'ye) yönlendirilmesini engeller."""
 
@@ -144,17 +187,18 @@ class _SafeRedirect(urllib.request.HTTPRedirectHandler):
         new = urllib.parse.urlparse(newurl)
         if new.netloc != old.netloc or (old.scheme == "https" and new.scheme != "https"):
             raise JiraError(
-                "Jira başka bir adrese yönlendirdi; güvenlik için durduruldu. "
-                "Jira adresini tarayıcıdaki ana adresle aynı yazdığından emin ol."
+                "Jira redirected to a different address, so the request was stopped for security. "
+                "Make sure the Jira address matches the one in your browser."
             )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class JiraClient:
-    def __init__(self, base_url: str, token: str, timeout: int = 60):
+    def __init__(self, base_url: str, token: str, timeout: int = 60, stats: Optional[RequestStats] = None):
         self.base_url = normalize_url(base_url)
         self._token = clean_token(token)
         self.timeout = timeout
+        self.stats = stats or RequestStats()
         self._openers = self._build_openers()
         self._opener_idx = 0
 
@@ -182,12 +226,18 @@ class JiraClient:
             req = urllib.request.Request(
                 url,
                 method="GET",  # bu uygulamada başka bir HTTP metodu kullanılmaz
-                headers={"Authorization": "Bearer " + self._token, "Accept": "application/json"},
+                headers={"Authorization": "Bearer " + self._token, "Accept": "application/json",
+                         "Accept-Encoding": "gzip"},  # sunucuda sıkıştırma açıksa veri ~10 kat küçülür
             )
             try:
                 with self._openers[self._opener_idx].open(req, timeout=self.timeout) as resp:
-                    return json.load(resp)
+                    raw = resp.read()
+                    self.stats.add(len(raw))
+                    if (resp.headers.get("Content-Encoding") or "").lower() == "gzip":
+                        raw = gzip.decompress(raw)
+                    return json.loads(raw)
             except urllib.error.HTTPError as e:
+                self.stats.add(0)
                 if e.code in (429, 502, 503, 504) and attempt < 3:
                     try:
                         delay = float(e.headers.get("Retry-After", ""))
@@ -203,57 +253,62 @@ class JiraClient:
                         self._opener_idx += 1
                         continue
                     raise JiraError(
-                        "Güvenlik sertifikası doğrulanamadı. Şirket ağında/VPN'de olduğundan "
-                        "emin ol; sorun sürerse BT ile görüş."
+                        "The security certificate could not be verified. Make sure you are on the company "
+                        "network/VPN; if the problem persists, contact IT."
                     ) from None
                 raise JiraError(
-                    "Jira'ya ulaşılamadı. İnternet/VPN bağlantını ve Jira adresini kontrol et."
+                    "Could not reach Jira. Check your internet/VPN connection and the Jira address."
                 ) from None
             except (TimeoutError, socket.timeout):
-                raise JiraError("Jira zamanında yanıt vermedi. Biraz sonra tekrar dene.") from None
-            except json.JSONDecodeError:
+                raise JiraError("Jira did not respond in time. Please try again shortly.") from None
+            except (ValueError, EOFError, gzip.BadGzipFile):  # JSON/UTF-8/gzip çözülemedi
                 raise JiraError(
-                    "Jira beklenmeyen bir yanıt verdi (giriş sayfası olabilir). "
-                    "Jira adresini ve token'ı kontrol et."
+                    "Jira returned an unexpected response (possibly a login page). "
+                    "Check the Jira address and the token."
                 ) from None
 
     @staticmethod
     def _http_error(e: urllib.error.HTTPError) -> JiraError:
         detail = ""
         try:
-            body = json.loads(e.read().decode("utf-8", "replace"))
+            body = json.loads(_read_body(e).decode("utf-8", "replace"))
             msgs = body.get("errorMessages") or []
             detail = " ".join(msgs) if msgs else ""
         except Exception:
             pass
         if e.code == 401:
-            return JiraError("Token geçersiz, süresi dolmuş ya da yanlış yapıştırılmış (401).")
+            return JiraError("The token is invalid, expired or was pasted incorrectly (401).")
         if e.code == 403:
-            return JiraError("Bu işlem için yetkin yok (403). Projeye erişimin olduğundan emin ol.")
+            return JiraError("You do not have permission for this (403). Make sure you have access to the project.")
         if e.code == 404:
-            return JiraError("Adres bulunamadı (404). Jira adresini kontrol et.")
+            return JiraError("Address not found (404). Check the Jira address.")
         if e.code == 400:
-            return JiraError("Jira sorguyu kabul etmedi" + (f": {detail}" if detail else " (400)."))
-        return JiraError(f"Jira hata verdi (HTTP {e.code})." + (f" {detail}" if detail else ""))
+            return JiraError("Jira rejected the query" + (f": {detail}" if detail else " (400)."))
+        return JiraError(f"Jira returned an error (HTTP {e.code})." + (f" {detail}" if detail else ""))
 
     # -- yüksek seviye ------------------------------------------------------
-    def search_issues(self, projects: list[str], start: date, end: date, cancel=None) -> list[dict]:
+    def iter_issues(self, projects: list[str], start: date, end: date, cancel=None):
+        """Dönemde worklog'u olan issue'ları, worklog'ları gömülü olarak sayfa sayfa verir: (sayfa, toplam).
+
+        Jira gömülü alanda issue başına en fazla 20 worklog döndürür; eksik kalanlar issue_worklogs ile tamamlanır.
+        """
         proj = ", ".join(f'"{p}"' for p in projects)
-        jql = f'project in ({proj}) AND worklogDate >= "{start:%Y-%m-%d}" AND worklogDate <= "{end:%Y-%m-%d}"'
-        issues: list[dict] = []
+        jql = (f'project in ({proj}) AND worklogDate >= "{start:%Y-%m-%d}" AND worklogDate <= "{end:%Y-%m-%d}" '
+               "ORDER BY key ASC")  # sabit sıra: sayfalar arasında kayıt eklense de issue kaçmaz/tekrarlanmaz
         start_at = 0
         while True:
             _check_cancel(cancel)
             data = self.get_json(
                 "/rest/api/2/search",
-                {"jql": jql, "fields": "summary,project,issuetype", "startAt": start_at, "maxResults": 100},
+                {"jql": jql, "fields": "summary,project,issuetype,worklog", "startAt": start_at,
+                 "maxResults": SEARCH_PAGE_SIZE},
             )
             batch = data.get("issues", [])
-            issues.extend(batch)
+            total = data.get("total", 0)
+            yield batch, total
             start_at += len(batch)
-            if not batch or start_at >= data.get("total", 0):
+            if not batch or start_at >= total:
                 break
-        return issues
 
     def issue_worklogs(self, key: str) -> list[dict]:
         path = f"/rest/api/2/issue/{urllib.parse.quote(key)}/worklog"
@@ -273,6 +328,42 @@ def _check_cancel(cancel) -> None:
         raise Cancelled()
 
 
+def _embedded_worklogs(issue: dict) -> Optional[list]:
+    """Arama yanıtındaki worklog'lar eksiksizse onları, değilse (ya da alan gizliyse) None döndürür."""
+    field = (issue.get("fields") or {}).get("worklog")
+    if not isinstance(field, dict) or not isinstance(field.get("worklogs"), list):
+        return None
+    logs = field["worklogs"]
+    return logs if len(logs) >= (field.get("total") or 0) else None
+
+
+def _issue_rows(issue: dict, worklogs: list, start: date, end: date, base_url: str) -> list[dict]:
+    key = issue["key"]
+    fields = issue.get("fields", {})
+    rows = []
+    for w in worklogs:
+        started = to_turkey_time(w["started"])  # Jira'nın verdiği ofset okunur, Türkiye saatine çevrilir
+        if not (start <= started.date() <= end):
+            continue
+        created = to_turkey_time(w["created"]) if w.get("created") else None
+        rows.append(
+            {
+                "user": (w.get("author") or {}).get("displayName", "?"),
+                "date": started.date(),
+                "time": started.time().replace(second=0),
+                "key": key,
+                "summary": fields.get("summary", ""),
+                "project": (fields.get("project") or {}).get("key", ""),
+                "type": (fields.get("issuetype") or {}).get("name", ""),
+                "hours": round(w.get("timeSpentSeconds", 0) / 3600, 2),
+                "comment": str(w.get("comment") or "").replace("\r", " ").replace("\n", " ").strip(),
+                "created": created,
+                "url": f"{base_url}/browse/{key}",
+            }
+        )
+    return rows
+
+
 def fetch_report(
     base_url: str,
     token: str,
@@ -281,47 +372,57 @@ def fetch_report(
     end: date,
     progress: Optional[ProgressFn] = None,
     cancel=None,
+    stats: Optional[RequestStats] = None,
 ) -> list[dict]:
-    """Seçilen proje(ler) ve tarih aralığı için worklog satırlarını döndürür."""
+    """Seçilen proje(ler) ve tarih aralığı için worklog satırlarını döndürür.
+
+    İstek sayısı: arama sayfaları (500'lük) + yalnızca 20'den fazla worklog'u olan task'lar için birer istek.
+    """
     check_range(start, end)
-    client = JiraClient(base_url, token)
+    client = JiraClient(base_url, token, stats=stats)
     say = progress or (lambda stage, done, total: None)
 
     say("search", 0, 0)
-    # Jira "worklogDate"i kendi saat diliminde değerlendirir; Türkiye saatiyle gün sınırında kalan kayıtlar
-    # kaçmasın diye aralığı bir gün genişletip kesin filtreyi aşağıda Türkiye saatine göre uygularız.
-    issues = client.search_issues(projects, start - timedelta(days=1), end + timedelta(days=1), cancel)
-    total = len(issues)
-    say("issues", 0, total)
-
     rows: list[dict] = []
-    for n, issue in enumerate(issues, 1):
-        _check_cancel(cancel)
-        key = issue["key"]
-        fields = issue.get("fields", {})
-        for w in client.issue_worklogs(key):
-            started = to_turkey_time(w["started"])  # Jira'nın verdiği ofset okunur, Türkiye saatine çevrilir
-            if not (start <= started.date() <= end):
-                continue
-            created = to_turkey_time(w["created"]) if w.get("created") else None
-            rows.append(
-                {
-                    "user": (w.get("author") or {}).get("displayName", "?"),
-                    "date": started.date(),
-                    "time": started.time().replace(second=0),
-                    "key": key,
-                    "summary": fields.get("summary", ""),
-                    "project": (fields.get("project") or {}).get("key", ""),
-                    "type": (fields.get("issuetype") or {}).get("name", ""),
-                    "hours": round(w.get("timeSpentSeconds", 0) / 3600, 2),
-                    "comment": str(w.get("comment") or "").replace("\r", " ").replace("\n", " ").strip(),
-                    "created": created,
-                    "url": f"{client.base_url}/browse/{key}",
-                }
-            )
-        say("issues", n, total)
+    seen: set[str] = set()
+    pending: dict = {}  # future -> issue (worklog'ları ayrıca çekilen task'lar)
+    done = total = 0
 
-    rows.sort(key=lambda r: (r["user"].lower(), r["date"], r["time"]))
+    def collect(futures) -> None:
+        nonlocal done
+        for fut in futures:
+            issue = pending.pop(fut)
+            rows.extend(_issue_rows(issue, fut.result(), start, end, client.base_url))
+            done += 1
+
+    pool = ThreadPoolExecutor(max_workers=DETAIL_WORKERS)
+    try:
+        # Jira "worklogDate"i kendi saat diliminde değerlendirir; Türkiye saatiyle gün sınırında kalan kayıtlar
+        # kaçmasın diye aralığı bir gün genişletip kesin filtreyi Türkiye saatine göre uygularız.
+        for batch, total in client.iter_issues(projects, start - timedelta(days=1), end + timedelta(days=1), cancel):
+            for issue in batch:
+                if issue["key"] in seen:
+                    continue
+                seen.add(issue["key"])
+                logs = _embedded_worklogs(issue)
+                if logs is None:
+                    pending[pool.submit(client.issue_worklogs, issue["key"])] = issue
+                else:
+                    rows.extend(_issue_rows(issue, logs, start, end, client.base_url))
+                    done += 1
+            collect([f for f in pending if f.done()])
+            say("issues", done, max(total, done))
+        while pending:
+            _check_cancel(cancel)
+            finished, _ = wait(list(pending), timeout=0.5, return_when=FIRST_COMPLETED)
+            if finished:
+                collect(finished)
+                say("issues", done, max(total, done))
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+        client.stats.finish(len(seen))
+
+    rows.sort(key=lambda r: (r["user"].lower(), r["date"], r["time"], r["key"]))
     return rows
 
 
@@ -329,7 +430,7 @@ def fetch_report(
 # Çıktı dosyaları
 # --------------------------------------------------------------------------
 def default_filename(projects: list[str], start: date, end: date, ext: str) -> str:
-    proj = "-".join(projects) if len(projects) <= 3 else f"{len(projects)}-proje"
+    proj = "-".join(projects) if len(projects) <= 3 else f"{len(projects)}-projects"
     return f"Jira_Worklog_{proj}_{start:%Y-%m-%d}_{end:%Y-%m-%d}.{ext}"
 
 
@@ -392,8 +493,8 @@ def write_xlsx(rows: list[dict], path: Path, meta: dict) -> None:
         ws.column_dimensions[col].width = width
 
     # Özet sayfası: kişi bazında toplam
-    summ = wb.create_sheet("Özet")
-    summ.append(["Kullanıcı", "Worklog sayısı", "Toplam saat"])
+    summ = wb.create_sheet("Overview")
+    summ.append(["User", "Worklogs", "Total hours"])
     per_user: dict[str, list] = {}
     for r in rows:
         agg = per_user.setdefault(r["user"], [0, 0.0])
@@ -401,7 +502,7 @@ def write_xlsx(rows: list[dict], path: Path, meta: dict) -> None:
         agg[1] += r["hours"]
     for user, (count, hours) in sorted(per_user.items(), key=lambda kv: -kv[1][1]):
         summ.append([user, count, round(hours, 2)])
-    summ.append(["Toplam", len(rows), round(sum(r["hours"] for r in rows), 2)])
+    summ.append(["Total", len(rows), round(sum(r["hours"] for r in rows), 2)])
     for cell in summ[1] + summ[summ.max_row]:
         cell.font = Font(bold=True)
     for row in summ.iter_rows(min_row=2):
@@ -411,13 +512,13 @@ def write_xlsx(rows: list[dict], path: Path, meta: dict) -> None:
     summ.column_dimensions["C"].width = 14
     info_row = summ.max_row + 2
     for label, value in (
-        ("Projeler", ", ".join(meta.get("projects", []))),
-        ("Dönem", f"{meta['start']:%d.%m.%Y} – {meta['end']:%d.%m.%Y}"),
-        ("Oluşturulma", f"{datetime.now():%d.%m.%Y %H:%M}"),
+        ("Projects", ", ".join(meta.get("projects", []))),
+        ("Period", f"{meta['start']:%d.%m.%Y} – {meta['end']:%d.%m.%Y}"),
+        ("Created", f"{datetime.now():%d.%m.%Y %H:%M}"),
         ("Jira", meta.get("url", "")),
-        ("Saatler", "Türkiye saati (UTC+3)"),
-        ("Başlama saati", "Jira'daki «Date Started» alanı: worklog girilirken seçilen başlangıç zamanı"),
-        ("Girilme zamanı", "Worklog'un Jira'ya kaydedildiği an"),
+        ("Times", "Turkey time (UTC+3)"),
+        ("Start time", "Jira's «Date Started» field: the start time chosen when the worklog was entered"),
+        ("Logged at", "The moment the worklog was saved in Jira"),
     ):
         summ.cell(row=info_row, column=1, value=label).font = Font(bold=True)
         summ.cell(row=info_row, column=2, value=value).alignment = Alignment(horizontal="left")
