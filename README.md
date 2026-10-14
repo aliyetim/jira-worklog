@@ -6,7 +6,8 @@ Jira Server / Data Center için worklog raporu aracı (Tempo gerekmez). Seçilen
 Uygulama açılınca bilgisayarda küçük bir yerel sunucu başlar ve tarayıcıda bir sayfa açılır. Ek arayüz kütüphanesi gerekmez.
 
 - Jira'dan **yalnızca okuma (GET)** yapar; hiçbir kaydı değiştirmez, silmez.
-- **Token kaydedilmez.** Sadece bellekte tutulur; ayar dosyasına, günlüğe ya da rapora yazılmaz.
+- **Token hiçbir dosyaya yazılmaz.** «Remember on this computer» seçiliyse işletim sisteminin şifreli anahtar deposunda
+  (macOS Anahtar Zinciri, Windows Kimlik Bilgisi Yöneticisi) saklanır; seçili değilse yalnızca bellekte tutulur.
 - Mac ve Windows'ta çalışır. Kaynak kodu okunabilir (aşağıdaki «Güvenlik notları»).
 
 ## Kurulum
@@ -103,7 +104,7 @@ Varsayılan port 47865'tir; uygulama zaten açıksa ikinci başlatma yeni sunucu
 
 ## Güvenlik notları
 
-- Kod yaklaşık 1400 satır Python; Jira'ya giden her istek `worklog_core.py` içindeki tek noktadan, `GET` yöntemiyle çıkar.
+- Kod yaklaşık 2000 satır Python; Jira'ya giden her istek `worklog_core.py` içindeki tek noktadan, `GET` yöntemiyle çıkar.
 - Sunucu yalnızca `127.0.0.1`'e bağlanır; ağdaki başka bilgisayarlar erişemez.
 - Her çalıştırmada rastgele bir anahtar üretilir; anahtarsız ya da yanlış `Host` başlıklı istekler reddedilir
   (başka web sitelerinin yerel uygulamaya istek atmasını engeller). Sayfa katı bir içerik güvenliği politikasıyla (CSP) sunulur.
@@ -111,5 +112,9 @@ Varsayılan port 47865'tir; uygulama zaten açıksa ikinci başlatma yeni sunucu
 - Sekme kapanınca uygulama birkaç saniye içinde kendini kapatır.
 - Jira başka bir adrese yönlendirirse token oraya gönderilmez, işlem durur.
 - Her kullanıcı **kendi** Personal Access Token'ını üretmeli; başkasının token'ı kullanılmamalı.
+- Hatırlanan token Jira adresine bağlı saklanır (`jira-worklog` / adres); yalnızca o adrese gönderilir ve tarayıcıya
+  hiç geri verilmez. Yalnızca Jira'nın kabul ettiği token saklanır; Jira 401 dönerse (süresi dolmuş, iptal edilmiş)
+  kendiliğinden silinir. Anahtar deposu yoksa (ör. bazı Linux kurulumları) bu seçenek görünmez; düz dosyaya düşülmez.
+- Token'a bir bitiş tarihi verilmesi önerilir: hatırlanan token sınırsız süre geçerli kalmaz.
 - Ayarlar (token hariç) `~/.jira_worklog_app.json` dosyasına kaydedilir: adres, proje, dönem, çıktı biçimi.
 - Otomatik güncelleme repo sahibinin kodunu çalıştırır; bunu istemeyen `JIRA_WORKLOG_NO_UPDATE=1` kullanmalı.

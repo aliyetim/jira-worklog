@@ -33,6 +33,8 @@ Token, Jira'ya senin adına giriş yapan geçici bir şifredir. **Kendi token'ı
 3. **Create token** de, ad olarak «worklog rapor» yaz ve oluştur.
 4. Çıkan uzun metni kopyala. (Bir daha gösterilmez; kaybedersen yenisini üretirsin.)
 
+Token oluştururken bir bitiş tarihi (ör. 90 gün) seçmen önerilir. Süresi dolunca uygulama yenisini ister.
+
 Menü adları Jira sürümüne göre biraz değişebilir. Sayfadaki **How do I create one?** bağlantısı da aynı adımları gösterir.
 
 ## 3) Rapor alma
@@ -41,7 +43,9 @@ Menü adları Jira sürümüne göre biraz değişebilir. Sayfadaki **How do I c
 2. **Jira address:** İlk seferde Jira'nın ana adresini yaz (sana verilen adres, örn. `https://jira.sirketiniz.com`). Bir sonraki sefere hatırlanır.
 3. **Project key:** Task numaralarının başındaki kısa kod. `PROJ-123` için `PROJ`.
 4. **Period:** Last month (geçen ay), This month (bu ay) ya da Custom range (iki tarihi takvimden seçersin).
-5. **Jira token:** Kopyaladığın token'ı yapıştır. Uygulama token'ı kaydetmez, her açılışta yeniden yapıştırırsın.
+5. **Jira token:** Kopyaladığın token'ı yapıştır. **Remember on this computer** seçili kalırsa rapor başarıyla
+   alındıktan sonra token Mac'inin Anahtar Zinciri'nde şifreli saklanır; sonraki açılışlarda yeniden yapıştırman gerekmez.
+   **Change** ile yeni token girebilir, **Forget** ile kayıtlı token'ı silebilirsin.
 6. **Create report**'a bas. Task sayısına göre bir dakika kadar sürebilir. Dönem şeridi ilerledikçe dolar.
 7. Bitince sayfanın altında **Preview** tablosu açılır. İndirmeden önce kayıtlara buradan bakabilirsin:
    - Arama kutusuna kişi, task, özet, yorum ya da tarih (`03.09`) yaz; tablo ve toplam saat buna göre süzülür.
@@ -69,6 +73,7 @@ Hiçbir şey yapman gerekmez. Uygulama her açıldığında yeni sürüm varsa k
 |---|---|
 | Jira address cannot be empty | «Jira address» alanını (change bağlantısı) doldur |
 | The token is invalid, expired or was pasted incorrectly | Token'ı baştan ve eksiksiz yapıştır; olmazsa yenisini üret |
+| The saved token no longer works | Kayıtlı token'ın süresi dolmuş ya da iptal edilmiş; Jira'da yenisini üretip yapıştır |
 | You do not have permission for this | O projeye Jira'da erişimin olmayabilir; proje anahtarını kontrol et |
 | Could not reach Jira | Şirket ağında ya da VPN'de olduğundan emin ol |
 | No worklogs found for the selected project in this period | Proje anahtarını ve tarihleri kontrol et |

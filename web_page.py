@@ -104,6 +104,17 @@ details input { margin-top: 10px; }
   font: inherit; font-size: 13.5px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
 }
 .token-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.tok-saved {
+  display: flex; align-items: center; gap: 12px; height: 42px; padding: 0 12px;
+  background: var(--field); border: 1px solid var(--line-strong); border-radius: 6px;
+}
+.tok-saved .lock { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--amber); stroke-width: 1.6; }
+.tok-saved-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; }
+.tok-saved-text span { color: var(--muted); }
+.tok-saved .link { flex: none; }
+fieldset:disabled .tok-saved { opacity: .6; }
+.check { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; cursor: pointer; }
+.check input { width: 16px; height: 16px; margin: 0; accent-color: var(--ink); cursor: pointer; }
 .token-head .link { white-space: nowrap; flex: none; }
 
 .actions { display: flex; gap: 12px; padding: 18px 22px 22px; border-top: 1px solid var(--line); }
@@ -271,8 +282,15 @@ dialog .primary { height: 44px; font-size: 15px; }
       <div class="row">
         <label for="token">Jira token</label>
         <div class="field">
+          <div id="tok-saved" class="tok-saved" hidden>
+            <svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.75" y="7" width="10.5" height="7.25" rx="1.5"/><path d="M5.25 7V4.75a2.75 2.75 0 0 1 5.5 0V7"/></svg>
+            <span class="tok-saved-text">Saved token <span id="tok-store"></span></span>
+            <button type="button" id="tok-change" class="link">Change</button>
+            <button type="button" id="tok-forget" class="link">Forget</button>
+          </div>
           <input id="token" type="password" placeholder="Paste your token here" autocomplete="new-password" spellcheck="false">
-          <p class="hint token-head"><span>The token is not saved; it is only used to fetch this report.</span>
+          <label id="remember-box" class="check" hidden><input type="checkbox" id="remember" checked><span>Remember on this computer</span></label>
+          <p class="hint token-head"><span id="tok-hint">The token is not saved; it is only used to fetch this report.</span>
             <button type="button" id="help-open" class="link">How do I create one?</button></p>
         </div>
       </div>
@@ -346,7 +364,7 @@ dialog .primary { height: 44px; font-size: 15px; }
     <li>Click <b>Create token</b>, name it «worklog report» and create it.</li>
     <li>Copy the long text that appears (it is shown only once) and paste it into the token box on this page.</li>
   </ol>
-  <p class="hint">Menu names may differ slightly between Jira versions. You can delete the token in Jira when you are done.</p>
+  <p class="hint">Menu names may differ slightly between Jira versions. Tip: give the token an expiry date; when it expires, the app asks for a new one.</p>
   <div class="actions">
     <a id="profile-link" class="primary" href="#" target="_blank" rel="noopener noreferrer">Open Jira profile page</a>
     <button type="button" id="help-close" class="ghost">Close</button>
@@ -390,6 +408,35 @@ dialog .primary { height: 44px; font-size: 15px; }
   function baseUrl() {
     try { const u = new URL(/^https?:/i.test(el.url.value) ? el.url.value : "https://" + el.url.value); return u.origin; }
     catch (_) { return BOOT.url; }
+  }
+
+  // ---------- Token ----------
+  // Kayıtlı token tarayıcıya gelmez; sayfa yalnızca "kayıtlı mı" bilgisini görür.
+  const tok = Object.assign({ available: false, saved: false, store: "" }, BOOT.token, { editing: false });
+
+  function renderToken() {
+    const savedMode = tok.saved && !tok.editing;
+    $("tok-saved").hidden = !savedMode;
+    el.token.hidden = savedMode;
+    $("remember-box").hidden = savedMode || !tok.available;
+    $("tok-store").textContent = "· " + tok.store;
+    el.token.placeholder = tok.saved ? "Paste a new token" : "Paste your token here";
+    $("tok-hint").textContent = savedMode ? "Stored encrypted in the " + tok.store + " and sent only to this Jira address."
+      : tok.saved ? "Leave empty to keep using the saved token."
+      : tok.available && $("remember").checked ? "Saved encrypted in the " + tok.store + " once the report succeeds."
+      : "The token is not saved; it is only used to fetch this report.";
+  }
+  function setTokenInfo(info) {
+    Object.assign(tok, info);
+    if (!tok.saved || !el.token.value.trim()) tok.editing = false;
+    renderToken();
+  }
+  async function refreshToken(clearIfSaved) {
+    let r;
+    try { r = await api("/api/token?url=" + encodeURIComponent(el.url.value)); } catch (_) { return; }
+    if (!r.ok || !r.data) return;
+    if (clearIfSaved && r.data.saved) el.token.value = "";
+    setTokenInfo(r.data);
   }
 
   // ---------- Dönem şeridi ----------
@@ -716,6 +763,10 @@ dialog .primary { height: 44px; font-size: 15px; }
       el.result.hidden = true; drawFromForm();
       setNote("Cancelled.", "msg-info");
     }
+    if (["done", "empty", "error", "cancelled"].includes(st.state)) {
+      // Başarılı raporda "Remember" seçiliyse token artık depodadır: kutudaki kopya silinir
+      refreshToken(st.state === "done" || st.state === "empty");
+    }
   }
 
   function lost() {
@@ -738,7 +789,23 @@ dialog .primary { height: 44px; font-size: 15px; }
   // ---------- Olaylar ----------
   document.querySelectorAll('input[name="preset"]').forEach((r) => r.addEventListener("change", applyPreset));
   [el.start, el.end].forEach((i) => i.addEventListener("input", drawFromForm));
-  el.url.addEventListener("input", () => { $("url-view").textContent = hostLabel() || "Enter the Jira address"; });
+  let urlTimer = null;
+  el.url.addEventListener("input", () => {
+    $("url-view").textContent = hostLabel() || "Enter the Jira address";
+    clearTimeout(urlTimer);
+    urlTimer = setTimeout(() => refreshToken(false), 300);  // kayıtlı token yalnızca kendi adresinde kullanılır
+  });
+
+  $("remember").addEventListener("change", renderToken);
+  $("tok-change").addEventListener("click", () => { tok.editing = true; renderToken(); el.token.focus(); });
+  $("tok-forget").addEventListener("click", async () => {
+    let r;
+    try { r = await api("/api/token/forget", { method: "POST", body: JSON.stringify({ url: el.url.value }) }); }
+    catch (_) { return lost(); }
+    if (!r.ok) { setNote((r.data && r.data.error) || "The request failed.", "msg-err"); return; }
+    setTokenInfo(r.data);
+    setNote("The saved token was removed from the " + tok.store + ".", "msg-info");
+  });
 
   document.querySelectorAll('input[name="view"]').forEach((r) => r.addEventListener("change", () => {
     pv.view = radio("view"); pv.limit = PAGE_ROWS; drawTable();
@@ -754,7 +821,8 @@ dialog .primary { height: 44px; font-size: 15px; }
     ev.preventDefault();
     setNote("", "");
     const body = { url: el.url.value, project: el.project.value, preset: radio("preset"),
-                   start: el.start.value, end: el.end.value, token: el.token.value, format: radio("fmt") };
+                   start: el.start.value, end: el.end.value, token: el.token.value, format: radio("fmt"),
+                   useSaved: tok.saved && !el.token.value.trim(), remember: tok.available && $("remember").checked };
     let r;
     try { r = await api("/api/start", { method: "POST", body: JSON.stringify(body) }); }
     catch (_) { return lost(); }
@@ -785,6 +853,7 @@ dialog .primary { height: 44px; font-size: 15px; }
   el.url.value = BOOT.url;
   $("url-view").textContent = hostLabel() || "Enter the Jira address";
   if (!el.url.value) $("url-box").open = true;
+  renderToken();
   setRadio("preset", BOOT.preset);
   setRadio("fmt", BOOT.format);
   if (BOOT.preset === "custom") { el.start.value = BOOT.start; el.end.value = BOOT.end; }

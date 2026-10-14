@@ -4,7 +4,8 @@ Jira Worklog Raporu - yerel web arayüzü.
 
 Çift tıklanınca bilgisayarında küçük bir sunucu başlar ve tarayıcıda sayfa açılır.
 - Sunucu yalnızca bu bilgisayardan erişilebilir (127.0.0.1); dışarıya açılmaz.
-- Jira'ya yalnızca GET (okuma) isteği atılır. Token kaydedilmez, sadece bellekte tutulur.
+- Jira'ya yalnızca GET (okuma) isteği atılır. Token hiçbir dosyaya yazılmaz; istenirse işletim sisteminin
+  şifreli anahtar deposunda (macOS Anahtar Zinciri, Windows Kimlik Bilgisi Yöneticisi) saklanır.
 - Sekme kapatılınca uygulama kendini kapatır.
 """
 from __future__ import annotations
@@ -61,6 +62,62 @@ def _iso_or(text, fallback):
         return fallback.isoformat()
 
 
+# --------------------------------------------------------------------------
+# Token deposu: işletim sisteminin şifreli anahtar deposu. Token Jira adresine bağlı saklanır, böylece
+# yalnızca kaydedildiği adrese gönderilir; tarayıcıya hiç geri verilmez.
+# --------------------------------------------------------------------------
+KEYRING_SERVICE = "jira-worklog"
+_keyring = None  # None: henüz bakılmadı, False: depo yok
+
+
+def _store():
+    global _keyring
+    if _keyring is None:
+        try:
+            import keyring
+
+            mod = type(keyring.get_keyring()).__module__
+            _keyring = False if ("fail" in mod or "null" in mod) else keyring  # depo bulunamadıysa düz dosyaya düşmeyiz
+        except Exception:
+            _keyring = False
+    return _keyring or None
+
+
+def token_load(url: str) -> str | None:
+    kr = _store()
+    try:
+        return kr.get_password(KEYRING_SERVICE, url) if kr and url else None
+    except Exception:
+        return None
+
+
+def token_save(url: str, token: str) -> None:
+    kr = _store()
+    try:
+        if kr:
+            kr.set_password(KEYRING_SERVICE, url, token)
+    except Exception:
+        pass
+
+
+def token_forget(url: str) -> None:
+    kr = _store()
+    try:
+        if kr and token_load(url):
+            kr.delete_password(KEYRING_SERVICE, url)
+    except Exception:
+        pass
+
+
+def token_info(url: str) -> dict:
+    try:
+        url = core.normalize_url(url)
+    except core.JiraError:
+        url = ""
+    store = {"darwin": "macOS Keychain", "win32": "Windows Credential Manager"}.get(sys.platform, "system keyring")
+    return {"available": _store() is not None, "saved": bool(token_load(url)), "store": store}
+
+
 def boot_payload() -> dict:
     cfg = load_config()
     prev, cur = core.previous_month_range(), core.current_month_range()
@@ -74,6 +131,7 @@ def boot_payload() -> dict:
         "format": "csv" if "csv" in str(cfg.get("format", "")).lower() else "xlsx",
         "ranges": {"prev": [prev[0].isoformat(), prev[1].isoformat()],
                    "cur": [cur[0].isoformat(), cur[1].isoformat()]},
+        "token": token_info(cfg.get("url") or ""),
     }
 
 
@@ -130,10 +188,19 @@ def start_job(state: AppState, payload: dict) -> None:
     else:
         start, end = core.parse_date(payload.get("start", "")), core.parse_date(payload.get("end", ""))
     core.check_range(start, end)
-    raw_token = payload.get("token", "")
-    if not str(raw_token).strip():
+    raw_token = str(payload.get("token", "")).strip()
+    use_saved = not raw_token and bool(payload.get("useSaved"))
+    if use_saved:
+        token = token_load(url)
+        if not token:
+            raise core.JiraError("There is no saved token for this Jira address. Paste your token.")
+    elif not raw_token:
         raise core.JiraError("Token cannot be empty. Click «How do I create one?» for help.")
-    token = core.clean_token(raw_token)
+    else:
+        token = core.clean_token(raw_token)
+    remember = not use_saved and bool(payload.get("remember"))
+    if not use_saved and not remember:
+        token_forget(url)  # "hatırlama" seçilmediyse eski kayıt da kalmasın
     fmt = "csv" if payload.get("format") == "csv" else "xlsx"
 
     if state.file:
@@ -149,7 +216,8 @@ def start_job(state: AppState, payload: dict) -> None:
                                     "rev": state.job["rev"] + 1}
     save_config({"url": url, "project": ", ".join(projects), "preset": preset if preset in ("prev", "cur") else "custom",
                  "start": start.isoformat(), "end": end.isoformat(), "format": fmt})
-    state.worker = threading.Thread(target=_run_job, args=(state, url, token, projects, start, end, fmt), daemon=True)
+    state.worker = threading.Thread(target=_run_job, args=(state, url, token, projects, start, end, fmt, use_saved, remember),
+                                    daemon=True)
     state.worker.start()
 
 
@@ -160,12 +228,14 @@ def _row_json(r: dict) -> dict:
             "url": r["url"]}
 
 
-def _run_job(state: AppState, url, token, projects, start, end, fmt) -> None:
+def _run_job(state: AppState, url, token, projects, start, end, fmt, use_saved=False, remember=False) -> None:
     def progress(stage, done, total):
         state.update(stage=stage, done=done, total=total)
 
     try:
         rows = core.fetch_report(url, token, projects, start, end, progress=progress, cancel=state.cancel)
+        if remember:
+            token_save(url, token)  # yalnızca Jira'nın kabul ettiği token saklanır
         if not rows:
             state.update(state="empty")
             return
@@ -185,7 +255,12 @@ def _run_job(state: AppState, url, token, projects, start, end, fmt) -> None:
     except core.Cancelled:
         state.update(state="cancelled")
     except core.JiraError as e:
-        state.update(state="error", message=str(e))
+        if use_saved and e.status == 401:
+            token_forget(url)
+            state.update(state="error", message="The saved token no longer works (it may have expired or been revoked), "
+                                                "so it was removed. Paste a new token.")
+        else:
+            state.update(state="error", message=str(e))
     except ImportError:
         state.update(state="error", message="The component needed for Excel output is missing. Choose CSV and try again.")
     except OSError as e:
@@ -268,6 +343,10 @@ def make_handler(state: AppState):
                     return
                 self._ping()
                 return self._json(200, state.snapshot())
+            if path == "/api/token":
+                if not self._guard():
+                    return
+                return self._json(200, token_info(self._query().get("url", "")))
             if path == "/api/rows":
                 if not self._guard():
                     return
@@ -316,6 +395,13 @@ def make_handler(state: AppState):
             if path == "/api/cancel":
                 state.cancel.set()
                 return self._json(200, {"ok": True})
+            if path == "/api/token/forget":
+                try:
+                    url = core.normalize_url(json.loads(raw.decode("utf-8") or "{}").get("url", ""))
+                except (ValueError, AttributeError, core.JiraError):
+                    return self._json(400, {"error": "Could not read the request."})
+                token_forget(url)
+                return self._json(200, token_info(url))
             self._json(404, {"error": "not found"})
 
     return Handler

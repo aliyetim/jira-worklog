@@ -45,7 +45,11 @@ LEGACY_PAGE_SIZE = 100  # önceki yöntem: 100'lük arama sayfaları + her task 
 
 
 class JiraError(Exception):
-    """Kullanıcıya olduğu gibi gösterilebilecek, anlaşılır hata."""
+    """Kullanıcıya olduğu gibi gösterilebilecek, anlaşılır hata. Jira'dan geldiyse HTTP kodu `status`'tadır."""
+
+    def __init__(self, message: str, status: Optional[int] = None):
+        super().__init__(message)
+        self.status = status
 
 
 class Cancelled(Exception):
@@ -277,14 +281,16 @@ class JiraClient:
         except Exception:
             pass
         if e.code == 401:
-            return JiraError("The token is invalid, expired or was pasted incorrectly (401).")
-        if e.code == 403:
-            return JiraError("You do not have permission for this (403). Make sure you have access to the project.")
-        if e.code == 404:
-            return JiraError("Address not found (404). Check the Jira address.")
-        if e.code == 400:
-            return JiraError("Jira rejected the query" + (f": {detail}" if detail else " (400)."))
-        return JiraError(f"Jira returned an error (HTTP {e.code})." + (f" {detail}" if detail else ""))
+            msg = "The token is invalid, expired or was pasted incorrectly (401)."
+        elif e.code == 403:
+            msg = "You do not have permission for this (403). Make sure you have access to the project."
+        elif e.code == 404:
+            msg = "Address not found (404). Check the Jira address."
+        elif e.code == 400:
+            msg = "Jira rejected the query" + (f": {detail}" if detail else " (400).")
+        else:
+            msg = f"Jira returned an error (HTTP {e.code})." + (f" {detail}" if detail else "")
+        return JiraError(msg, e.code)
 
     # -- yüksek seviye ------------------------------------------------------
     def iter_issues(self, projects: list[str], start: date, end: date, cancel=None):

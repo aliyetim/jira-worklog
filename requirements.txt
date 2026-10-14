@@ -1,2 +1,3 @@
 certifi
+keyring>=24
 openpyxl>=3.1

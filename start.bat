@@ -12,4 +12,6 @@ if not exist ".venv\Scripts\python.exe" (
   ".venv\Scripts\python.exe" -m pip install -q --disable-pip-version-check -r requirements.txt
 )
 if exist ".git" if not "%JIRA_WORKLOG_NO_UPDATE%"=="1" git pull --ff-only --quiet >nul 2>&1
+rem requirements.txt degistiyse bagimliliklari yeniden kur
+fc /b requirements.txt ".venv\req.txt" >nul 2>&1 || (".venv\Scripts\python.exe" -m pip install -q --disable-pip-version-check -r requirements.txt && copy /y requirements.txt ".venv\req.txt" >nul)
 ".venv\Scripts\python.exe" worklog_web.py %*
