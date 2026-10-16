@@ -5,6 +5,8 @@ Excel dosyası olarak verir. Jira'dan sadece okur; hiçbir kaydı değiştirmez 
 
 ## 1) İlk kurulum (bir kez, yaklaşık 1 dakika)
 
+### Mac
+
 1. **Terminal**'i aç: `Cmd + Boşluk` tuşlarına bas, «Terminal» yaz, Enter'a bas.
 2. Aşağıdaki satırı **tamamen kopyalayıp** Terminal'e yapıştır ve Enter'a bas:
 
@@ -22,6 +24,22 @@ Bundan sonra uygulamayı **Launchpad**'den ya da `Cmd + Boşluk` ile «Jira Work
 
 Bu uygulama Mac'inde kurulum sırasında üretildiği için «Apple doğrulayamadı» uyarısı çıkmaz.
 Uygulamayı açınca birkaç saniye içinde tarayıcıda **Worklog report** sayfası açılır. Uygulamanın dili İngilizcedir.
+
+### Windows
+
+1. **PowerShell**'i aç: Başlat menüsüne «PowerShell» yaz, **Windows PowerShell**'e tıkla.
+2. Aşağıdaki satırı **tamamen kopyalayıp** PowerShell'e yapıştır (sağ tık yapıştırır) ve Enter'a bas:
+
+   ```
+   irm https://raw.githubusercontent.com/aliyetim/jira-worklog/main/install.ps1 | iex
+   ```
+
+   Komut uygulamayı ve çalışması için gereken Python'ı (toplam ~47 MB) indirir; ek bir program kurmana ya da yönetici
+   şifresi girmene gerek yoktur.
+3. Yeşil «Setup complete» yazısını görünce uygulama kendiliğinden açılır. PowerShell'i kapatabilirsin.
+
+Bundan sonra uygulamayı **Başlat menüsünden** ya da masaüstündeki **Jira Worklog** kısayolundan açarsın.
+Kırmızı «Setup failed» yazısı çıkarsa yazının tamamını bana gönder.
 
 ## 2) Token üretme (bir kez; süresi dolunca yenile)
 
@@ -79,6 +97,7 @@ Hiçbir şey yapman gerekmez. Uygulama her açıldığında yeni sürüm varsa k
 | Lost connection to the app | Uygulamayı yeniden aç; eski sekmeyi kapatabilirsin |
 | «The Jira Worklog folder was not found» | `jira-worklog` klasörünü taşıdıysan Terminal'de `bash ~/jira-worklog/install.sh` çalıştır |
 | Uygulamayı açarken «Rosetta» kurmak istiyor | Gerek yok, iptal edebilirsin. Terminal'de `bash ~/jira-worklog/install.sh --app-only` çalıştır, sonra uygulamayı yeniden aç |
+| Windows: «Jira Worklog could not start» | `%LOCALAPPDATA%\jira-worklog\launcher.log` dosyasını bana gönder |
 | Uygulama hiç açılmıyor | Terminal'de `bash ~/jira-worklog/start.sh` yaz; çıkan mesajı bana gönder |
 
 Başka bir hata olursa ekranın fotoğrafını gönder.

@@ -11,3 +11,4 @@ dist/
 *.xlsx
 *.csv
 .jira_worklog_app.json
+launcher.log

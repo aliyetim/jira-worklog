@@ -33,20 +33,30 @@ açılışta kendiliğinden yeni başlatıcıya geçer; hemen düzeltmek için: 
 
 ### Windows
 
-Python 3.9+ ve Git kurulu olmalı. Sonra:
+PowerShell'i aç (Başlat → «PowerShell») ve şu tek komutu yapıştır:
 
-```bat
-git clone https://github.com/aliyetim/jira-worklog.git
+```powershell
+irm https://raw.githubusercontent.com/aliyetim/jira-worklog/main/install.ps1 | iex
 ```
 
-klasördeki `start.bat` dosyasına çift tıkla (ilk açılışta kurulumu kendisi yapar).
+Git ya da kurulu bir Python **gerekmez**, yönetici yetkisi istenmez. Komut uygulama dosyalarını (~100 KB) ve taşınabilir bir
+Python 3.12'yi (~47 MB, SHA-256 ile doğrulanır) `%LOCALAPPDATA%\jira-worklog` klasörüne indirir, Başlat menüsüne ve masaüstüne
+**Jira Worklog** kısayolu ekler ve uygulamayı açar. Kısayol `windows_launcher.py`'yi `pythonw.exe` ile çalıştırır (konsol
+penceresi açılmaz); başlatıcı her açılışta güncellemeyi kontrol eder. Açılışta bir sorun olursa mesaj kutusu çıkar, ayrıntı
+`%LOCALAPPDATA%\jira-worklog\launcher.log` dosyasındadır.
+
+Şirket bilgisayarlarında güvenlik politikası PowerShell betiklerini ya da `%LOCALAPPDATA%` altındaki programları
+engelleyebilir; o durumda BT'den izin gerekir. Kaldırmak için: `%LOCALAPPDATA%\jira-worklog` klasörünü ve iki kısayolu sil.
+
+Eski yöntem (Python 3.9+ ve Git kurulu olmalı): `git clone https://github.com/aliyetim/jira-worklog.git`, sonra klasördeki
+`start.bat` dosyasına çift tıkla. Bu kurulumlar `git pull` ile güncellenmeye devam eder.
 
 ### Güncelleme
 
 Uygulama her açılışta repo'dan güncellemeyi sessizce çeker (ağ yoksa mevcut sürümle devam eder). Kapatmak için
 `JIRA_WORKLOG_NO_UPDATE=1` ortam değişkenini ver.
 
-- `curl` ile kurulanlar: `main` dalının arşivi koşullu istekle (`If-None-Match`) sorulur; değişiklik yoksa sunucu 304 döner ve
+- `curl` (Mac) ya da `install.ps1` (Windows) ile kurulanlar: `main` dalının arşivi koşullu istekle (`If-None-Match`) sorulur; değişiklik yoksa sunucu 304 döner ve
   hiçbir şey indirilmez. Sürüm işareti `.version` dosyasındadır.
 - `git clone` ile kurulmuş eski kurulumlar `git pull` ile güncellenmeye devam eder.
 - Python sürümünü yükseltmek için `install.sh` içindeki `PY_RELEASE`/`PY_VERSION`/`PY_SHA256_*` değiştirilir; kullanıcıların
@@ -67,7 +77,9 @@ Ayrıntılı anlatım: [`PM_KULLANIM_REHBERI.md`](PM_KULLANIM_REHBERI.md).
 | Dosya | Görevi |
 |---|---|
 | `install.sh` | Mac/Linux kurulumu: uygulama dosyaları, (Mac'te) taşınabilir Python, sanal ortam, bağımlılıklar, `Jira Worklog.app` |
-| `start.sh`, `start.command`, `start.bat` | Güncelle + başlat (uygulama bunları çağırır) |
+| `install.ps1` | Windows kurulumu: uygulama dosyaları, taşınabilir Python, sanal ortam, bağımlılıklar, kısayollar |
+| `windows_launcher.py` | Windows kısayolunun çalıştırdığı başlatıcı: güncelleme + bağımlılıklar + uygulama |
+| `start.sh`, `start.command`, `start.bat` | Güncelle + başlat (Mac uygulaması `start.sh`'i çağırır; `start.bat` git ile kurulmuş Windows içindir) |
 | `worklog_web.py` | Uygulamanın kendisi: yerel sunucu + API |
 | `web_page.py` | Tarayıcıda açılan sayfa (HTML/CSS/JS) |
 | `worklog_core.py` | Jira istemcisi, doğrulama, Excel/CSV yazımı |
