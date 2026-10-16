@@ -6,6 +6,9 @@ Windows başlatıcısı. Başlat menüsü/masaüstü kısayolu bunu pythonw.exe 
 3) Uygulamayı (worklog_web) aynı süreçte başlatır; güncellenen dosyalar bu açılışta kullanılır.
 Hata olursa launcher.log dosyasına yazar ve bir mesaj kutusu gösterir.
 Güncellemeyi kapatmak için: JIRA_WORKLOG_NO_UPDATE=1
+
+«--install-shortcuts»: install.ps1 çağırır; Başlat menüsü ve masaüstü kısayolunu oluşturur. Şirket politikasıyla
+PowerShell kısıtlı dil modundaysa COM kullanılamadığı için kısayollar buradan (comtypes) oluşturulur.
 """
 from __future__ import annotations
 
@@ -72,6 +75,32 @@ def sync_requirements() -> None:
         print(result.stdout, result.stderr)
 
 
+def install_shortcuts() -> int:
+    import ctypes
+
+    from comtypes.client import CreateObject
+    from comtypes.persist import IPersistFile
+    from comtypes.shelllink import IShellLinkW, ShellLink
+
+    def folder(csidl: int) -> Path:
+        buf = ctypes.create_unicode_buffer(260)
+        ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
+        return Path(buf.value)
+
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    for place in (folder(0x0002), folder(0x0010)):  # CSIDL_PROGRAMS (Başlat menüsü), CSIDL_DESKTOPDIRECTORY
+        link = CreateObject(ShellLink, interface=IShellLinkW)
+        link.SetPath(str(pythonw))
+        link.SetArguments(f'"{APP_DIR / "windows_launcher.py"}"')
+        link.SetWorkingDirectory(str(APP_DIR))
+        link.SetIconLocation(str(APP_DIR / "assets" / "icon.ico"), 0)
+        link.SetDescription("Jira worklog report")
+        place.mkdir(parents=True, exist_ok=True)
+        link.QueryInterface(IPersistFile).Save(str(place / "Jira Worklog.lnk"), True)
+        print("Shortcut:", place / "Jira Worklog.lnk")
+    return 0
+
+
 def show_error(text: str) -> None:
     if os.name == "nt":
         import ctypes
@@ -83,6 +112,8 @@ def show_error(text: str) -> None:
 
 def main() -> int:
     os.chdir(APP_DIR)
+    if sys.argv[1:] == ["--install-shortcuts"]:
+        return install_shortcuts()
     if sys.stdout is None:  # pythonw: konsol yok, çıktılar günlüğe
         if LOG_PATH.exists() and LOG_PATH.stat().st_size > LOG_LIMIT:
             LOG_PATH.unlink()

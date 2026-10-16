@@ -45,8 +45,9 @@ Python 3.12'yi (~47 MB, SHA-256 ile doğrulanır) `%LOCALAPPDATA%\jira-worklog` 
 penceresi açılmaz); başlatıcı her açılışta güncellemeyi kontrol eder. Açılışta bir sorun olursa mesaj kutusu çıkar, ayrıntı
 `%LOCALAPPDATA%\jira-worklog\launcher.log` dosyasındadır.
 
-Şirket bilgisayarlarında güvenlik politikası PowerShell betiklerini ya da `%LOCALAPPDATA%` altındaki programları
-engelleyebilir; o durumda BT'den izin gerekir. Kaldırmak için: `%LOCALAPPDATA%\jira-worklog` klasörünü ve iki kısayolu sil.
+Kurulum betiği PowerShell'in kısıtlı dil modunda (Constrained Language Mode; AppLocker/WDAC politikaları) da çalışır:
+.NET ya da COM kullanmaz, kısayolları Python (`comtypes`) oluşturur. Politika `%LOCALAPPDATA%` altındaki programları da
+engelliyorsa betik bunu söyler; o durumda BT'den izin gerekir. Kaldırmak için: `%LOCALAPPDATA%\jira-worklog` klasörünü ve iki kısayolu sil.
 
 Eski yöntem (Python 3.9+ ve Git kurulu olmalı): `git clone https://github.com/aliyetim/jira-worklog.git`, sonra klasördeki
 `start.bat` dosyasına çift tıkla. Bu kurulumlar `git pull` ile güncellenmeye devam eder.
