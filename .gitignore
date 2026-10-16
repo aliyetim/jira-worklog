@@ -1,5 +1,6 @@
 .venv/
 .python/
+.deps/
 .version
 __pycache__/
 *.pyc

@@ -27,6 +27,8 @@ Uygulamayı açınca birkaç saniye içinde tarayıcıda **Worklog report** sayf
 
 ### Windows
 
+0. **Şirket bilgisayarındaysan:** Güvenlik politikası internetten indirilen programları engelleyebilir. Önce şirketin yazılım
+   portalından **Python**'ı (3.9 veya üstü) kur; kurulum komutu onu kendiliğinden bulup kullanır.
 1. **PowerShell**'i aç: Başlat menüsüne «PowerShell» yaz, **Windows PowerShell**'e tıkla.
 2. Aşağıdaki satırı **tamamen kopyalayıp** PowerShell'e yapıştır (sağ tık yapıştırır) ve Enter'a bas:
 
@@ -34,12 +36,13 @@ Uygulamayı açınca birkaç saniye içinde tarayıcıda **Worklog report** sayf
    irm https://raw.githubusercontent.com/aliyetim/jira-worklog/main/install.ps1 | iex
    ```
 
-   Komut uygulamayı ve çalışması için gereken Python'ı (toplam ~47 MB) indirir; ek bir program kurmana ya da yönetici
-   şifresi girmene gerek yoktur.
+   Bilgisayarda Python kuruluysa onu kullanır; yoksa gereken Python'ı da indirir (~47 MB). Yönetici şifresi girmene
+   gerek yoktur.
 3. Yeşil «Setup complete» yazısını görünce uygulama kendiliğinden açılır. PowerShell'i kapatabilirsin.
 
 Bundan sonra uygulamayı **Başlat menüsünden** ya da masaüstündeki **Jira Worklog** kısayolundan açarsın.
-Kırmızı «Setup failed» yazısı çıkarsa yazının tamamını bana gönder.
+Kırmızı «Setup failed» yazısı çıkarsa yazının tamamını bana gönder. Altında sarı bir «security policy» uyarısı varsa
+önce portaldan Python kurup komutu yeniden çalıştır.
 
 ## 2) Token üretme (bir kez; süresi dolunca yenile)
 

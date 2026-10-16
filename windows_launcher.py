@@ -2,7 +2,8 @@
 Windows başlatıcısı. Başlat menüsü/masaüstü kısayolu bunu pythonw.exe ile (konsol penceresi açmadan) çalıştırır:
 1) Uygulama zip ile kurulduysa (install.ps1) GitHub'da yeni sürüm var mı bakar; değişiklik yoksa sunucu 304 döner
    ve hiçbir şey indirilmez. Ağ yoksa mevcut sürümle devam edilir.
-2) requirements.txt değiştiyse bağımlılıkları kurar.
+2) requirements.txt değiştiyse bağımlılıkları .deps klasörüne kurar (pip --target; sanal ortam yok, böylece
+   kurulum klasöründen hiçbir program çalıştırılmaz ve şirketin kurduğu Python ile de çalışır).
 3) Uygulamayı (worklog_web) aynı süreçte başlatır; güncellenen dosyalar bu açılışta kullanılır.
 Hata olursa launcher.log dosyasına yazar ve bir mesaj kutusu gösterir.
 Güncellemeyi kapatmak için: JIRA_WORKLOG_NO_UPDATE=1
@@ -25,6 +26,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent
 ARCHIVE_URL = "https://codeload.github.com/aliyetim/jira-worklog/zip/refs/heads/main"
 LOG_PATH = APP_DIR / "launcher.log"
+DEPS_DIR = APP_DIR / ".deps"  # bağımlılıklar (install.ps1 kurar)
 LOG_LIMIT = 256 * 1024
 
 
@@ -58,7 +60,7 @@ def update_app() -> None:
 
 def sync_requirements() -> None:
     req = APP_DIR / "requirements.txt"
-    stamp = APP_DIR / ".venv" / ".req-sha256"  # install.ps1 aynı özeti yazar
+    stamp = DEPS_DIR / ".req-sha256"  # install.ps1 aynı özeti yazar
     digest = hashlib.sha256(req.read_bytes()).hexdigest()
     if stamp.exists() and stamp.read_text(encoding="ascii").strip() == digest:
         return
@@ -66,7 +68,8 @@ def sync_requirements() -> None:
     if python.name.lower() == "pythonw.exe":
         python = python.with_name("python.exe")  # pip çıktısı için; pencere açılmaz (CREATE_NO_WINDOW)
     result = subprocess.run(
-        [str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", "-r", str(req)],
+        [str(python), "-m", "pip", "install", "-q", "--disable-pip-version-check", "--upgrade", "--target", str(DEPS_DIR),
+         "-r", str(req)],
         capture_output=True, text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode == 0:
@@ -112,6 +115,7 @@ def show_error(text: str) -> None:
 
 def main() -> int:
     os.chdir(APP_DIR)
+    sys.path.insert(0, str(DEPS_DIR))
     if sys.argv[1:] == ["--install-shortcuts"]:
         return install_shortcuts()
     if sys.stdout is None:  # pythonw: konsol yok, çıktılar günlüğe

@@ -39,15 +39,24 @@ PowerShell'i aç (Başlat → «PowerShell») ve şu tek komutu yapıştır:
 irm https://raw.githubusercontent.com/aliyetim/jira-worklog/main/install.ps1 | iex
 ```
 
-Git ya da kurulu bir Python **gerekmez**, yönetici yetkisi istenmez. Komut uygulama dosyalarını (~100 KB) ve taşınabilir bir
-Python 3.12'yi (~47 MB, SHA-256 ile doğrulanır) `%LOCALAPPDATA%\jira-worklog` klasörüne indirir, Başlat menüsüne ve masaüstüne
-**Jira Worklog** kısayolu ekler ve uygulamayı açar. Kısayol `windows_launcher.py`'yi `pythonw.exe` ile çalıştırır (konsol
-penceresi açılmaz); başlatıcı her açılışta güncellemeyi kontrol eder. Açılışta bir sorun olursa mesaj kutusu çıkar, ayrıntı
+Git **gerekmez**, yönetici yetkisi istenmez. Komut uygulama dosyalarını (~100 KB) `%LOCALAPPDATA%\jira-worklog` klasörüne
+indirir, Başlat menüsüne ve masaüstüne **Jira Worklog** kısayolu ekler ve uygulamayı açar.
+
+- **Python:** Bilgisayarda Python 3.9+ kuruluysa (ör. şirketin yazılım portalından) o kullanılır; aranan yerler `py.exe`,
+  `PATH`, `Program Files\Python3*`, `C:\Python3*` ve `%LOCALAPPDATA%\Programs\Python\Python3*`. Başka bir yerdeyse:
+  `$env:JIRA_WORKLOG_PYTHON = "D:\...\python.exe"` ve ardından aynı komut. Kurulu Python yoksa taşınabilir Python 3.12
+  (~47 MB, SHA-256 ile doğrulanır) `.python\` klasörüne indirilir.
+- **Bağımlılıklar** sanal ortam yerine `.deps\` klasörüne düz Python dosyaları olarak kurulur (`pip --target`). Böylece kurulum
+  klasöründen hiçbir program (`.exe`) çalıştırılmaz; kullanıcı klasörlerindeki programları engelleyen uygulama denetimi
+  politikaları (AppLocker/WDAC), Python izinli bir yere kuruluysa uygulamayı engellemez.
+- Kısayol `windows_launcher.py`'yi Python'ın `pythonw.exe`'siyle çalıştırır (konsol penceresi açılmaz); başlatıcı her
+  açılışta güncellemeyi kontrol eder. Açılışta bir sorun olursa mesaj kutusu çıkar, ayrıntı
 `%LOCALAPPDATA%\jira-worklog\launcher.log` dosyasındadır.
 
 Kurulum betiği PowerShell'in kısıtlı dil modunda (Constrained Language Mode; AppLocker/WDAC politikaları) da çalışır:
-.NET ya da COM kullanmaz, kısayolları Python (`comtypes`) oluşturur. Politika `%LOCALAPPDATA%` altındaki programları da
-engelliyorsa betik bunu söyler; o durumda BT'den izin gerekir. Kaldırmak için: `%LOCALAPPDATA%\jira-worklog` klasörünü ve iki kısayolu sil.
+.NET ya da COM kullanmaz, kısayolları Python (`comtypes`) oluşturur. Politika indirilen Python'ı engellerse betik bunu söyler:
+şirket portalından Python kurup aynı komutu yeniden çalıştırmak yeterlidir. Python sürümü değişirse (ör. 3.12 → 3.13) kısayol
+eski Python'ı gösterir; komutu bir kez daha çalıştırmak kısayolu düzeltir. Kaldırmak için: `%LOCALAPPDATA%\jira-worklog` klasörünü ve iki kısayolu sil.
 
 Eski yöntem (Python 3.9+ ve Git kurulu olmalı): `git clone https://github.com/aliyetim/jira-worklog.git`, sonra klasördeki
 `start.bat` dosyasına çift tıkla. Bu kurulumlar `git pull` ile güncellenmeye devam eder.
